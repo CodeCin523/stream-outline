@@ -1,0 +1,11 @@
+node_modules/
+dist/
+
+# Mixamo characters cannot be redistributed as standalone files per Adobe's license.
+# Download your own from mixamo.com and export as GLB — see README.
+public/*.glb
+
+# Misc
+.DS_Store
+*.zip
+third_person_controller_assets-main/

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stream Outline</title>
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #111; overflow: hidden; }
+
+    /* ── Main view ─────────────────────────────────────────────────────────── */
+    #main-area {
+      position: fixed;
+      top: 0; left: 240px; right: 0; bottom: 0;
+      background: #000;
+    }
+    /* Three overlays stacked: video → skeleton canvas → Three.js mesh canvas */
+    #video, #skelCanvas, #app {
+      position: absolute;
+      top: 0; left: 0; width: 100%; height: 100%;
+    }
+    #video {
+      object-fit: cover;
+      display: block;
+      transform: scaleX(-1);
+    }
+    #skelCanvas {
+      display: block;
+      pointer-events: none;
+      transform: scaleX(-1); /* mirror to match video */
+    }
+    #app > canvas { display: block; width: 100% !important; height: 100% !important; }
+
+    /* ── Sidebar ────────────────────────────────────────────────────────────── */
+    #sidebar {
+      display: flex; flex-direction: column;
+      position: fixed; top: 0; left: 0;
+      width: 240px; height: 100vh; z-index: 10;
+      background: rgba(12,12,12,0.97);
+      border-right: 1px solid rgba(255,255,255,0.09);
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      color: rgba(255,255,255,0.75);
+    }
+    #sidebar-header {
+      padding: 12px 12px 8px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      flex-shrink: 0;
+    }
+    #sidebar-header h1 {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.12em;
+      color: rgba(255,255,255,0.35); margin-bottom: 6px;
+    }
+    #statusRow { display: flex; align-items: center; justify-content: space-between; }
+    #status { color: rgba(255,255,255,0.5); font-size: 11px; }
+    #fps    { color: rgba(255,255,255,0.28); font-size: 11px; white-space: nowrap; }
+
+    #sidebar-scroll {
+      flex: 1; overflow-y: auto; min-height: 0;
+      padding: 8px 8px 16px; display: flex; flex-direction: column; gap: 5px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(255,255,255,0.18) transparent;
+    }
+    #sidebar-scroll::-webkit-scrollbar { width: 3px; }
+    #sidebar-scroll::-webkit-scrollbar-thumb {
+      background: rgba(255,255,255,0.18); border-radius: 2px;
+    }
+
+    /* ── <details> accordion sections ─────────────────────────────────────── */
+    details {
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 5px;
+      overflow: hidden;
+    }
+    details > summary {
+      padding: 7px 9px;
+      cursor: pointer;
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.13em;
+      color: rgba(255,255,255,0.72);
+      user-select: none; list-style: none;
+      display: flex; align-items: center; gap: 6px;
+      background: rgba(255,255,255,0.035);
+    }
+    details > summary::-webkit-details-marker { display: none; }
+    details > summary::before { content: '▸'; font-size: 9px; flex-shrink: 0; }
+    details[open] > summary::before { content: '▾'; }
+    details > summary:hover { background: rgba(255,255,255,0.07); }
+
+    /* Scene section — blue tint signals "goes to /remote" */
+    details.scene > summary { color: rgba(100,190,255,0.82); }
+    details.scene { border-color: rgba(100,190,255,0.12); }
+
+    .section-body {
+      padding: 8px 9px;
+      display: flex; flex-direction: column; gap: 7px;
+    }
+
+    /* Subsection label inside a section */
+    .sub {
+      font-size: 9px; text-transform: uppercase; letter-spacing: 0.11em;
+      color: rgba(255,255,255,0.55);
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+      padding-bottom: 3px; margin-top: 3px;
+    }
+    .sub:first-child { margin-top: 0; }
+
+    /* ── Controls ──────────────────────────────────────────────────────────── */
+    button {
+      padding: 6px 10px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.14);
+      color: rgba(255,255,255,0.8);
+      cursor: pointer; border-radius: 4px;
+      font-family: inherit; font-size: inherit;
+      text-align: left; transition: background 0.15s; width: 100%;
+    }
+    button:hover  { background: rgba(255,255,255,0.13); }
+    button.active { background: rgba(255,255,255,0.22); border-color: rgba(255,255,255,0.36); }
+
+    select {
+      width: 100%; padding: 6px 26px 6px 10px;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.14);
+      color: rgba(255,255,255,0.8);
+      border-radius: 4px; font-family: inherit; font-size: inherit;
+      cursor: pointer; appearance: none; -webkit-appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='rgba(255,255,255,0.32)'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 9px center;
+    }
+    select:hover { background-color: rgba(255,255,255,0.12); }
+    select option { background: #1a1a1a; color: rgba(255,255,255,0.8); }
+
+    .chk-row {
+      display: flex; align-items: center; gap: 7px;
+      cursor: pointer; color: rgba(255,255,255,0.65); user-select: none;
+    }
+    .chk-row input[type="checkbox"] {
+      width: 13px; height: 13px;
+      accent-color: rgba(255,255,255,0.6); cursor: pointer; flex-shrink: 0;
+    }
+
+    .slider-row { display: flex; flex-direction: column; gap: 3px; }
+    .slider-header {
+      display: flex; justify-content: space-between;
+      font-size: 10px; color: rgba(255,255,255,0.6);
+    }
+    input[type="range"] { width: 100%; cursor: pointer; accent-color: rgba(255,255,255,0.55); }
+
+    /* Indent bloom/ascii sub-settings */
+    #bloomSettings, #asciiSettings {
+      flex-direction: column; gap: 5px;
+      padding-left: 4px; border-left: 2px solid rgba(255,255,255,0.07);
+    }
+  </style>
+</head>
+<body>
+  <div id="main-area">
+    <video id="video" playsinline autoplay muted></video>
+    <canvas id="skelCanvas"></canvas>
+    <div id="app"></div>
+  </div>
+
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <h1>Stream Outline</h1>
+      <div id="statusRow">
+        <span id="status">Loading…</span>
+        <span id="fps"></span>
+      </div>
+    </div>
+
+    <div id="sidebar-scroll">
+
+      <!-- ══ CONTROLLER ════════════════════════════════════════════════════ -->
+      <details open>
+        <summary>Controller</summary>
+        <div class="section-body">
+
+          <div class="sub">Detect rate</div>
+          <select id="modelSelect">
+            <option value="lite">Lite — fast</option>
+            <option value="full">Full — balanced</option>
+            <option value="heavy" selected>Heavy — accurate</option>
+          </select>
+          <select id="modelFpsSelect">
+            <option value="0">Unlimited</option>
+            <option value="120">120 fps</option>
+            <option value="60">60 fps</option>
+            <option value="30" selected>30 fps</option>
+            <option value="24">24 fps</option>
+            <option value="20">20 fps</option>
+            <option value="15">15 fps</option>
+            <option value="10">10 fps</option>
+            <option value="5">5 fps</option>
+          </select>
+
+          <div class="sub">Preview rate</div>
+          <select id="viewFpsSelect">
+            <option value="0">Unlimited</option>
+            <option value="60" selected>60 fps</option>
+            <option value="30">30 fps</option>
+            <option value="24">24 fps</option>
+            <option value="15">15 fps</option>
+          </select>
+
+          <div class="sub">Overlay</div>
+          <label class="chk-row"><input type="checkbox" id="chkShowCamera" checked> Show camera</label>
+          <label class="chk-row"><input type="checkbox" id="chkShowSkel"   checked> Show skeleton</label>
+          <label class="chk-row"><input type="checkbox" id="chkShowMesh"   checked> Show mesh</label>
+
+        </div>
+      </details>
+
+      <!-- ══ POSE ══════════════════════════════════════════════════════════ -->
+      <details open>
+        <summary>Pose</summary>
+        <div class="section-body">
+
+          <div class="sub">Mirror</div>
+          <button id="btnMirror">Mirror Pose</button>
+          <label class="chk-row"><input type="checkbox" id="chkFlipArmRoll"> Swap arm sides</label>
+
+          <div class="sub">Chest freeze</div>
+          <label class="chk-row"><input type="checkbox" id="chkFreezeYaw"   checked> Freeze yaw</label>
+          <label class="chk-row"><input type="checkbox" id="chkFreezePitch" checked> Freeze pitch</label>
+          <label class="chk-row"><input type="checkbox" id="chkFreezeRoll"  checked> Freeze roll</label>
+
+          <div class="sub">Head</div>
+          <label class="chk-row"><input type="checkbox" id="chkHeadChest"> Head → chest yaw</label>
+
+        </div>
+      </details>
+
+      <!-- ══ OBS OUTPUT ═══════════════════════════════════════════════════ -->
+      <details open class="scene">
+        <summary>OBS Output</summary>
+        <div class="section-body">
+
+          <div class="sub">Render rate</div>
+          <select id="remoteFpsSelect">
+            <option value="0">Unlimited</option>
+            <option value="60" selected>60 fps</option>
+            <option value="30">30 fps</option>
+            <option value="24">24 fps</option>
+            <option value="20">20 fps</option>
+            <option value="15">15 fps</option>
+            <option value="10">10 fps</option>
+          </select>
+
+          <div class="sub">Display</div>
+          <button id="btnFlip">Flip Image</button>
+
+          <div class="sub">Effects</div>
+          <select id="effectSelect">
+            <option value="none">Effect: none</option>
+            <option value="bloom">Effect: bloom</option>
+            <option value="outline">Effect: outline (Sobel)</option>
+            <option value="aura">Effect: aura</option>
+            <option value="ascii">Effect: ASCII outline</option>
+          </select>
+          <div id="bloomSettings" style="display:none;">
+            <div class="slider-row">
+              <div class="slider-header"><span>Strength</span><span id="bloomStrV">0.70</span></div>
+              <input type="range" id="bloomStr" min="0" max="2" step="0.05" value="0.7">
+            </div>
+            <div class="slider-row">
+              <div class="slider-header"><span>Radius</span><span id="bloomRadV">0.15</span></div>
+              <input type="range" id="bloomRad" min="0" max="1" step="0.05" value="0.15">
+            </div>
+            <div class="slider-row">
+              <div class="slider-header"><span>Threshold</span><span id="bloomThrV">0.50</span></div>
+              <input type="range" id="bloomThr" min="0" max="1" step="0.05" value="0.5">
+            </div>
+          </div>
+          <div id="asciiSettings" style="display:none;">
+            <select id="asciiCellSize">
+              <option value="4">4×4</option>
+              <option value="8" selected>8×8</option>
+              <option value="12">12×12</option>
+              <option value="18">18×18</option>
+              <option value="24">24×24</option>
+              <option value="32">32×32</option>
+            </select>
+            <div class="slider-row">
+              <div class="slider-header"><span>Edge density</span><span id="asciiThrV">0.05</span></div>
+              <input type="range" id="asciiThr" min="0" max="0.5" step="0.01" value="0.05">
+            </div>
+          </div>
+
+          <div class="sub">Camera</div>
+          <button id="btnResetCam">Reset Camera</button>
+          <div class="slider-row">
+            <div class="slider-header"><span>Distance</span><span id="camZV">2.80</span></div>
+            <input type="range" id="camZ" min="0.3" max="6" step="0.1" value="2.8">
+          </div>
+          <div class="slider-row">
+            <div class="slider-header"><span>Height</span><span id="camYV">0.00</span></div>
+            <input type="range" id="camY" min="-2" max="3" step="0.1" value="0">
+          </div>
+          <div class="slider-row">
+            <div class="slider-header"><span>Horizontal</span><span id="camXV">0.00</span></div>
+            <input type="range" id="camX" min="-3" max="3" step="0.1" value="0">
+          </div>
+          <div class="slider-row">
+            <div class="slider-header"><span>Look-at height</span><span id="camTYV">0.00</span></div>
+            <input type="range" id="camTY" min="-1" max="2" step="0.05" value="0">
+          </div>
+
+        </div>
+      </details>
+
+    </div><!-- /sidebar-scroll -->
+  </div><!-- /sidebar -->
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
