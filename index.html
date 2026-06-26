@@ -14,8 +14,8 @@
       top: 0; left: 240px; right: 0; bottom: 0;
       background: #000;
     }
-    /* Three overlays stacked: video → skeleton canvas → Three.js mesh canvas */
-    #video, #skelCanvas, #app {
+    /* Two overlays stacked: video → Three.js mesh canvas */
+    #video, #app {
       position: absolute;
       top: 0; left: 0; width: 100%; height: 100%;
     }
@@ -23,11 +23,6 @@
       object-fit: cover;
       display: block;
       transform: scaleX(-1);
-    }
-    #skelCanvas {
-      display: block;
-      pointer-events: none;
-      transform: scaleX(-1); /* mirror to match video */
     }
     #app > canvas { display: block; width: 100% !important; height: 100% !important; }
 
@@ -156,7 +151,6 @@
 <body>
   <div id="main-area">
     <video id="video" playsinline autoplay muted></video>
-    <canvas id="skelCanvas"></canvas>
     <div id="app"></div>
   </div>
 
@@ -205,8 +199,14 @@
 
           <div class="sub">Overlay</div>
           <label class="chk-row"><input type="checkbox" id="chkShowCamera" checked> Show camera</label>
-          <label class="chk-row"><input type="checkbox" id="chkShowSkel"   checked> Show skeleton</label>
-          <label class="chk-row"><input type="checkbox" id="chkShowMesh"   checked> Show mesh</label>
+          <div class="slider-row">
+            <div class="slider-header"><span>Skeleton height</span><span id="skelYV">0.90</span></div>
+            <input type="range" id="skelY" min="-1" max="3" step="0.05" value="0.9">
+          </div>
+          <label class="chk-row"><input type="checkbox" id="chkShowSkel3d"> Skeleton raw</label>
+          <label class="chk-row"><input type="checkbox" id="chkShowSkelSmooth"> Skeleton smooth (EMA)</label>
+          <label class="chk-row"><input type="checkbox" id="chkShowSkelInterp"> Skeleton interp</label>
+          <label class="chk-row"><input type="checkbox" id="chkShowMesh" checked> Show mesh</label>
 
         </div>
       </details>
@@ -215,6 +215,16 @@
       <details open>
         <summary>Pose</summary>
         <div class="section-body">
+
+          <div class="sub">Tracking</div>
+          <div class="slider-row">
+            <div class="slider-header"><span>Min confidence</span><span id="minVisV">0.40</span></div>
+            <input type="range" id="minVis" min="0" max="1" step="0.05" value="0.4">
+          </div>
+          <div class="slider-row">
+            <div class="slider-header"><span>EMA alpha</span><span id="smoothAlphaV">0.35</span></div>
+            <input type="range" id="smoothAlpha" min="0.05" max="1" step="0.05" value="0.35">
+          </div>
 
           <div class="sub">Mirror</div>
           <button id="btnMirror">Mirror Pose</button>

@@ -3,7 +3,6 @@ import { POSE_CONNECTIONS } from './tracker.js';
 
 const JOINT_RADIUS = 0.018;
 const BONE_RADIUS  = 0.010;
-const MIN_VISIBILITY = 0.4;
 
 // Pre-allocate to avoid GC pressure in the render loop
 const _a   = new THREE.Vector3();
@@ -12,30 +11,37 @@ const _mid = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _up  = new THREE.Vector3(0, 1, 0);
 
-// Single shared materials — all meshes are the same colour;
-// the outline shader owns the final look.
-const MAT_JOINT = new THREE.MeshBasicMaterial({ color: 0xffffff });
-const MAT_BONE  = new THREE.MeshBasicMaterial({ color: 0xffffff });
-
-// Shared geometry (instances reuse the same buffer)
+// Geometry is shared — all instances use the same buffer
 const GEO_JOINT = new THREE.SphereGeometry(JOINT_RADIUS, 8, 6);
 const GEO_BONE  = new THREE.CylinderGeometry(BONE_RADIUS, BONE_RADIUS, 1, 6);
 
 export class Skeleton {
-  constructor(scene) {
+  /**
+   * @param {THREE.Scene} scene
+   * @param {object} opts
+   * @param {number} opts.minVisibility  landmark confidence cutoff (0 = show all)
+   * @param {number} opts.color          hex color for joints and bones
+   */
+  constructor(scene, { minVisibility = 0.4, color = 0xffffff } = {}) {
+    this._minVis = minVisibility;
+
+    // Per-instance materials so two skeletons can have different colours
+    const matJoint = new THREE.MeshBasicMaterial({ color });
+    const matBone  = new THREE.MeshBasicMaterial({ color });
+
     this.group = new THREE.Group();
     this._joints = [];
     this._bones  = [];
 
     for (let i = 0; i < 33; i++) {
-      const m = new THREE.Mesh(GEO_JOINT, MAT_JOINT);
+      const m = new THREE.Mesh(GEO_JOINT, matJoint);
       m.visible = false;
       this._joints.push(m);
       this.group.add(m);
     }
 
     for (const [ai, bi] of POSE_CONNECTIONS) {
-      const m = new THREE.Mesh(GEO_BONE, MAT_BONE);
+      const m = new THREE.Mesh(GEO_BONE, matBone);
       m.visible = false;
       this._bones.push({ mesh: m, ai, bi });
       this.group.add(m);
@@ -45,9 +51,9 @@ export class Skeleton {
   }
 
   /**
-   * Update skeleton from MediaPipe world landmarks.
-   * @param {Array|null} lms  - worldLandmarks[0] array (33 entries)
-   * @param {boolean} mirror  - flip x axis for selfie-mode cameras
+   * Update from MediaPipe world landmarks.
+   * @param {Array|null} lms  - worldLandmarks[0] (33 entries), or null to hide
+   * @param {boolean}    mirror
    */
   update(lms, mirror = false) {
     if (!lms) {
@@ -62,7 +68,7 @@ export class Skeleton {
     // Three.js:        x→right, y↑, z→viewer
     for (let i = 0; i < 33; i++) {
       const lm = lms[i];
-      const ok = lm && lm.visibility >= MIN_VISIBILITY;
+      const ok = lm && lm.visibility >= this._minVis;
       this._joints[i].visible = ok;
       if (ok) this._joints[i].position.set(flip * lm.x, -lm.y, -lm.z);
     }
@@ -70,10 +76,7 @@ export class Skeleton {
     for (const { mesh, ai, bi } of this._bones) {
       const la = lms[ai];
       const lb = lms[bi];
-      const ok =
-        la && lb &&
-        la.visibility >= MIN_VISIBILITY &&
-        lb.visibility >= MIN_VISIBILITY;
+      const ok = la && lb && la.visibility >= this._minVis && lb.visibility >= this._minVis;
 
       mesh.visible = ok;
       if (!ok) continue;

@@ -9,3 +9,4 @@ public/*.glb
 .DS_Store
 *.zip
 third_person_controller_assets-main/
+.claude

@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 
-const MIN_VIS = 0.4;
 const BODY = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
 // ── Scratch objects ─────────────────────────────────────────────────────────
@@ -110,6 +109,7 @@ export class Avatar {
     this._restBodyRt    = new THREE.Vector3();
     this._centerY       = 0;
     this.meshes         = [];
+    this.minVisibility  = 0.4;
   }
 
   async load(url) {
@@ -260,8 +260,8 @@ export class Avatar {
 
       if (type === -1) {
         // ── Torso: yaw from shoulders in XZ, pitch+roll from torso-up ───
-        if (!(lh?.visibility >= MIN_VIS && rh?.visibility >= MIN_VIS &&
-              ls?.visibility >= MIN_VIS && rs?.visibility >= MIN_VIS)) continue;
+        if (!(lh?.visibility >= this.minVisibility && rh?.visibility >= this.minVisibility &&
+              ls?.visibility >= this.minVisibility && rs?.visibility >= this.minVisibility)) continue;
 
         const hmx = flip*(lh.x+rh.x)*.5, hmy = -(lh.y+rh.y)*.5, hmz = -(lh.z+rh.z)*.5;
         const smx = flip*(ls.x+rs.x)*.5, smy = -(ls.y+rs.y)*.5, smz = -(ls.z+rs.z)*.5;
@@ -277,7 +277,7 @@ export class Avatar {
 
           if (headDrivesChest) {
             const lEar = lms[7], rEar = lms[8];
-            if (lEar?.visibility >= MIN_VIS && rEar?.visibility >= MIN_VIS) {
+            if (lEar?.visibility >= this.minVisibility && rEar?.visibility >= this.minVisibility) {
               const hX = flip*(lEar.x - rEar.x), hZ = -(lEar.z - rEar.z);
               const hLen = Math.hypot(hX, hZ);
               if (hLen > 0.001 && rLen > 0.001) {
@@ -330,8 +330,8 @@ export class Avatar {
 
       } else if (type === -2) {
         // ── Neck: shoulder-midpoint → nose ───────────────────────────────
-        if (!(ls?.visibility >= MIN_VIS && rs?.visibility >= MIN_VIS &&
-              nose?.visibility >= MIN_VIS)) continue;
+        if (!(ls?.visibility >= this.minVisibility && rs?.visibility >= this.minVisibility &&
+              nose?.visibility >= this.minVisibility)) continue;
         _va.set(flip*(ls.x+rs.x)*.5, -(ls.y+rs.y)*.5, -(ls.z+rs.z)*.5);
         _vb.set(flip*nose.x, -nose.y, -nose.z);
         _tgt.subVectors(_vb, _va).normalize();
@@ -359,7 +359,7 @@ export class Avatar {
         // Skip entirely if the primary joints (shoulder/elbow) aren't visible.
         // If only the reference (wrist) is missing, fall back to axis-only so
         // the arm direction still tracks without the roll component.
-        if (!la || !lb || la.visibility < MIN_VIS || lb.visibility < MIN_VIS) continue;
+        if (!la || !lb || la.visibility < this.minVisibility || lb.visibility < this.minVisibility) continue;
 
         const ax = swapArms ? -flip : flip; // reflect x when swapped
         _va.set(ax * la.x, -la.y, -la.z);
@@ -368,7 +368,7 @@ export class Avatar {
         const restArmQ = this._restArmFrameQ[boneName];
         if (!restArmQ) continue;
 
-        const cVis = lc && lc.visibility >= MIN_VIS;
+        const cVis = lc && lc.visibility >= this.minVisibility;
         let frameBuilt = false;
         if (cVis) {
           _vc.set(ax * lc.x, -lc.y, -lc.z);
@@ -410,6 +410,8 @@ export class Avatar {
     }
   }
 
+  get centerY() { return this._centerY; }
+
   // Re-seed prevWQ for arm bones to rest pose after an arm-swap toggle.
   // Without this, the first frame after a swap would compare the new
   // arm's quaternion against the old arm's last quaternion, potentially
@@ -419,6 +421,37 @@ export class Avatar {
       if (type !== -3) continue;
       const rq = this._restWorldQ[boneName];
       if (rq && this._prevWQ[boneName]) this._prevWQ[boneName].copy(rq);
+    }
+  }
+
+  // Returns the local bone quaternions for all BONE_MAP bones, or null when
+  // the avatar is not visible (no pose detected this frame).
+  getBoneQuaternions() {
+    if (!this.ready || !this._model?.visible) return null;
+    const out = {};
+    for (const [boneName] of BONE_MAP) {
+      const bone = this._bones[boneName];
+      if (!bone) continue;
+      const q = bone.quaternion;
+      out[boneName] = { x: q.x, y: q.y, z: q.z, w: q.w };
+    }
+    return out;
+  }
+
+  // Applies pre-solved bone quaternions from the controller.
+  // Bones must be set in BONE_MAP order (parent → child) so that
+  // updateMatrixWorld(true) cascades correctly down the hierarchy.
+  applyBoneQuaternions(data) {
+    if (!this._model) return;
+    if (!data) { this._model.visible = false; return; }
+    this._model.visible = true;
+    for (const [boneName] of BONE_MAP) {
+      const bone = this._bones[boneName];
+      const q    = data[boneName];
+      if (!bone || !q) continue;
+      bone.quaternion.set(q.x, q.y, q.z, q.w);
+      bone.updateMatrix();
+      bone.updateMatrixWorld(true);
     }
   }
 }
