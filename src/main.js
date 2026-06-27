@@ -1,4 +1,4 @@
-import { Tracker } from './tracker.js';
+import { Tracker, POSE_CONNECTIONS } from './tracker.js';
 import { Renderer } from './renderer.js';
 import { Avatar }   from './avatar.js';
 import { Skeleton } from './skeleton.js';
@@ -22,6 +22,9 @@ const viewFpsSelect     = document.getElementById('viewFpsSelect');
 const remoteFpsSelect   = document.getElementById('remoteFpsSelect');
 const effectSelect      = document.getElementById('effectSelect');
 const chkShowCamera     = document.getElementById('chkShowCamera');
+const chkShow2d         = document.getElementById('chkShow2d');
+const pose2dCanvas      = document.getElementById('pose2d');
+const pose2dCtx         = pose2dCanvas.getContext('2d');
 const chkShowSkel3d     = document.getElementById('chkShowSkel3d');
 const chkShowSkelSmooth = document.getElementById('chkShowSkelSmooth');
 const chkShowSkelInterp = document.getElementById('chkShowSkelInterp');
@@ -185,6 +188,11 @@ async function main() {
   chkShowCamera?.addEventListener('change', () => {
     videoEl.style.visibility = chkShowCamera.checked ? 'visible' : 'hidden';
     save('showCamera', chkShowCamera.checked);
+  });
+
+  chkShow2d?.addEventListener('change', () => {
+    if (!chkShow2d.checked) pose2dCtx.clearRect(0, 0, pose2dCanvas.width, pose2dCanvas.height);
+    save('show2d', chkShow2d.checked);
   });
 
   skelYSlider?.addEventListener('input', applySkelY);
@@ -390,6 +398,7 @@ async function main() {
     btnMirr?.classList.toggle('active', mirrored);
 
     restoreChk(chkShowCamera,     'showCamera',     true);
+    restoreChk(chkShow2d,         'show2d',         false);
     restoreChk(chkShowSkel3d,     'showSkel3d',     false);
     restoreChk(chkShowSkelSmooth, 'showSkelSmooth', false);
     restoreChk(chkShowSkelInterp, 'showSkelInterp', false);
@@ -445,6 +454,42 @@ async function main() {
     const boneData = avatar.getBoneQuaternions();
     if (boneData) bridge.send('bones', boneData);
     if (avatar._model) avatar._model.visible = chkShowMesh?.checked ?? true;
+
+    // 2D pose overlay
+    {
+      const lms2d = tracker.landmarks;
+      const cw = pose2dCanvas.offsetWidth, ch = pose2dCanvas.offsetHeight;
+      if (pose2dCanvas.width !== cw || pose2dCanvas.height !== ch) {
+        pose2dCanvas.width = cw; pose2dCanvas.height = ch;
+      }
+      if (chkShow2d?.checked && lms2d) {
+        pose2dCtx.clearRect(0, 0, cw, ch);
+        // connections
+        pose2dCtx.lineWidth = 2;
+        for (const [a, b] of POSE_CONNECTIONS) {
+          const la = lms2d[a], lb = lms2d[b];
+          if (!la || !lb) continue;
+          const vis = Math.min(la.visibility ?? 1, lb.visibility ?? 1);
+          if (vis < 0.15) continue;
+          pose2dCtx.strokeStyle = `rgba(255,255,255,${(vis * 0.8).toFixed(2)})`;
+          pose2dCtx.beginPath();
+          pose2dCtx.moveTo((1 - la.x) * cw, la.y * ch);
+          pose2dCtx.lineTo((1 - lb.x) * cw, lb.y * ch);
+          pose2dCtx.stroke();
+        }
+        // joints
+        for (const lm of lms2d) {
+          const vis = lm.visibility ?? 1;
+          if (vis < 0.15) continue;
+          pose2dCtx.fillStyle = `rgba(255,210,0,${vis.toFixed(2)})`;
+          pose2dCtx.beginPath();
+          pose2dCtx.arc((1 - lm.x) * cw, lm.y * ch, 4, 0, Math.PI * 2);
+          pose2dCtx.fill();
+        }
+      } else if (!chkShow2d?.checked) {
+        pose2dCtx.clearRect(0, 0, cw, ch);
+      }
+    }
 
     renderer.render();
 
