@@ -47,7 +47,7 @@ let swapArms = false;
 let flipped  = false;
 
 // ── FPS counters ───────────────────────────────────────────────────────────
-let _renderTimes = [], _modelTimes = [];
+let _renderTimes = [], _modelTimes = [], _remoteTimes = [];
 
 function _pushFps(ring, now) {
   ring.push(now);
@@ -55,14 +55,17 @@ function _pushFps(ring, now) {
 }
 function updateFpsDisplay(now) {
   _pushFps(_renderTimes, now);
-  fpsEl.textContent = `${Math.max(0,_renderTimes.length-1)}r ${Math.max(0,_modelTimes.length-1)}m fps`;
+  fpsEl.textContent = `${Math.max(0,_modelTimes.length-1)}m ${Math.max(0,_renderTimes.length-1)}p ${Math.max(0,_remoteTimes.length-1)}r fps`;
 }
 
 // ── Scheduling ─────────────────────────────────────────────────────────────
 let viewFps   = 60;
 let modelFps  = 30;
+let remoteFps = 60;
 let _lastDetectMs = 0;
-let _rafFrame = 0, _prevRafNow = 0, _rafInterval = 16.67;
+let _lastViewMs   = 0;
+let _lastRemoteMs = 0;
+let _lastBoneData = null;
 
 let _prevLms = null, _currLms = null, _prevT = 0, _currT = 0;
 let _pending = [];
@@ -279,6 +282,7 @@ async function main() {
   });
 
   remoteFpsSelect?.addEventListener('change', () => {
+    remoteFps = parseFloat(remoteFpsSelect.value);
     save('remoteFps', remoteFpsSelect.value);
     _sceneDirty = true;
   });
@@ -388,8 +392,9 @@ async function main() {
     if (savedEffect==='bloom'||savedEffect==='aura') applyBloom();
     if (savedEffect==='ascii') renderer.updateAsciiCellSize(parseFloat(asciiCellSize?.value ?? '8'));
 
-    viewFps  = parseFloat(viewFpsSelect?.value  ?? '60');
-    modelFps = parseFloat(modelFpsSelect?.value ?? '30');
+    viewFps   = parseFloat(viewFpsSelect?.value   ?? '60');
+    modelFps  = parseFloat(modelFpsSelect?.value  ?? '30');
+    remoteFps = parseFloat(remoteFpsSelect?.value ?? '60');
 
     flipped  = loadBool('flipped',  false);
     mirrored = loadBool('mirrored', false);
@@ -433,72 +438,82 @@ async function main() {
       else skeleton3d.group.visible = false;
     }
 
-    if (_prevRafNow > 0) _rafInterval += (now - _prevRafNow - _rafInterval) * 0.05;
-    _prevRafNow = now;
-    _rafFrame++;
-    const skipN = viewFps > 0 ? Math.max(1, Math.round(1000/(_rafInterval*viewFps))) : 1;
-    if (_rafFrame % skipN !== 0) return;
+    const needView   = viewFps   === 0 || now - _lastViewMs   >= 1000 / viewFps   - 1;
+    const needRemote = remoteFps === 0 || now - _lastRemoteMs >= 1000 / remoteFps - 1;
 
-    const displayLms = getLms(now);
-    _pending = [];
+    // Avatar update runs at whichever rate is higher — both consumers share it.
+    if (needView || needRemote) {
+      const displayLms = getLms(now);
+      _pending = [];
 
-    if (chkShowSkelInterp?.checked) skeletonInterp.update(displayLms, mirrored);
-    else skeletonInterp.group.visible = false;
+      if (chkShowSkelInterp?.checked) skeletonInterp.update(displayLms, mirrored);
+      else skeletonInterp.group.visible = false;
 
-    avatar.update(displayLms, mirrored,
-      chkFreezeYaw?.checked??false, chkFreezePitch?.checked??false,
-      chkFreezeRoll?.checked??false, chkHeadChest?.checked??false, swapArms);
+      avatar.update(displayLms, mirrored,
+        chkFreezeYaw?.checked??false, chkFreezePitch?.checked??false,
+        chkFreezeRoll?.checked??false, chkHeadChest?.checked??false, swapArms);
 
-    // Extract bones while avatar considers itself visible, then override local
-    // visibility — the remote always receives bones regardless of this toggle.
-    const boneData = avatar.getBoneQuaternions();
-    if (boneData) bridge.send('bones', boneData);
-    if (avatar._model) avatar._model.visible = chkShowMesh?.checked ?? true;
-
-    // 2D pose overlay
-    {
-      const lms2d = tracker.landmarks;
-      const cw = pose2dCanvas.offsetWidth, ch = pose2dCanvas.offsetHeight;
-      if (pose2dCanvas.width !== cw || pose2dCanvas.height !== ch) {
-        pose2dCanvas.width = cw; pose2dCanvas.height = ch;
-      }
-      if (chkShow2d?.checked && lms2d) {
-        pose2dCtx.clearRect(0, 0, cw, ch);
-        // connections
-        pose2dCtx.lineWidth = 2;
-        for (const [a, b] of POSE_CONNECTIONS) {
-          const la = lms2d[a], lb = lms2d[b];
-          if (!la || !lb) continue;
-          const vis = Math.min(la.visibility ?? 1, lb.visibility ?? 1);
-          if (vis < 0.15) continue;
-          pose2dCtx.strokeStyle = `rgba(255,255,255,${(vis * 0.8).toFixed(2)})`;
-          pose2dCtx.beginPath();
-          pose2dCtx.moveTo((1 - la.x) * cw, la.y * ch);
-          pose2dCtx.lineTo((1 - lb.x) * cw, lb.y * ch);
-          pose2dCtx.stroke();
-        }
-        // joints
-        for (const lm of lms2d) {
-          const vis = lm.visibility ?? 1;
-          if (vis < 0.15) continue;
-          pose2dCtx.fillStyle = `rgba(255,210,0,${vis.toFixed(2)})`;
-          pose2dCtx.beginPath();
-          pose2dCtx.arc((1 - lm.x) * cw, lm.y * ch, 4, 0, Math.PI * 2);
-          pose2dCtx.fill();
-        }
-      } else if (!chkShow2d?.checked) {
-        pose2dCtx.clearRect(0, 0, cw, ch);
-      }
+      const boneData = avatar.getBoneQuaternions();
+      if (boneData) _lastBoneData = boneData;
+      if (avatar._model) avatar._model.visible = chkShowMesh?.checked ?? true;
     }
 
-    renderer.render();
+    // Preview render at viewFps rate.
+    if (needView) {
+      _lastViewMs = now;
 
-    if (_sceneDirty) {
-      bridge.send('scene', readScene());
-      _sceneDirty = false;
+      // 2D pose overlay
+      {
+        const lms2d = tracker.landmarks;
+        const cw = pose2dCanvas.offsetWidth, ch = pose2dCanvas.offsetHeight;
+        if (pose2dCanvas.width !== cw || pose2dCanvas.height !== ch) {
+          pose2dCanvas.width = cw; pose2dCanvas.height = ch;
+        }
+        if (chkShow2d?.checked && lms2d) {
+          pose2dCtx.clearRect(0, 0, cw, ch);
+          // connections
+          pose2dCtx.lineWidth = 2;
+          for (const [a, b] of POSE_CONNECTIONS) {
+            const la = lms2d[a], lb = lms2d[b];
+            if (!la || !lb) continue;
+            const vis = Math.min(la.visibility ?? 1, lb.visibility ?? 1);
+            if (vis < 0.15) continue;
+            pose2dCtx.strokeStyle = `rgba(255,255,255,${(vis * 0.8).toFixed(2)})`;
+            pose2dCtx.beginPath();
+            pose2dCtx.moveTo((1 - la.x) * cw, la.y * ch);
+            pose2dCtx.lineTo((1 - lb.x) * cw, lb.y * ch);
+            pose2dCtx.stroke();
+          }
+          // joints
+          for (const lm of lms2d) {
+            const vis = lm.visibility ?? 1;
+            if (vis < 0.15) continue;
+            pose2dCtx.fillStyle = `rgba(255,210,0,${vis.toFixed(2)})`;
+            pose2dCtx.beginPath();
+            pose2dCtx.arc((1 - lm.x) * cw, lm.y * ch, 4, 0, Math.PI * 2);
+            pose2dCtx.fill();
+          }
+        } else if (!chkShow2d?.checked) {
+          pose2dCtx.clearRect(0, 0, cw, ch);
+        }
+      }
+
+      renderer.render();
+
+      if (_sceneDirty) {
+        bridge.send('scene', readScene());
+        _sceneDirty = false;
+      }
+
+      updateFpsDisplay(now);
     }
 
-    updateFpsDisplay(now);
+    // Remote bone send at remoteFps rate.
+    if (needRemote && _lastBoneData) {
+      _lastRemoteMs = now;
+      bridge.send('bones', _lastBoneData);
+      _pushFps(_remoteTimes, now);
+    }
   }
 
   requestAnimationFrame(loop);
